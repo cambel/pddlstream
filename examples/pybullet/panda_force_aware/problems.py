@@ -6,15 +6,17 @@ import math
 from examples.pybullet.utils.pybullet_tools.bi_panda_problems import create_bi_panda, create_short_table, Problem, create_table, create_panda
 from examples.pybullet.utils.pybullet_tools.panda_utils import get_other_arm, get_carry_conf, set_arm_conf, open_arm, \
     arm_conf, REST_LEFT_ARM, close_arm, set_group_conf, STRAIGHT_LEFT_ARM, get_extended_conf, get_group_links, PLATE_GRASP_LEFT_ARM,\
-    get_max_limit, get_gripper_joints, TOP_HOLDING_LEFT_ARM_CENTERED
+    get_max_limit, get_gripper_joints, TOP_HOLDING_LEFT_ARM_CENTERED, TOP_HOLDING_TRAJ_START, get_top_cylinder_grasps
 from examples.pybullet.utils.pybullet_tools.utils import get_bodies, sample_placement, pairwise_collision, \
     add_data_path, load_pybullet, set_point, Point, create_box, stable_z, joint_from_name, get_point, wait_for_user,\
     RED, GREEN, BLUE, BLACK, WHITE, BROWN, TAN, GREY, create_cylinder, enable_gravity, link_from_name, get_link_pose, \
-    Pose, set_joint_position, TRAY_URDF, set_pose, add_fixed_constraint, COKE_URDF
+    Pose, set_joint_position, TRAY_URDF, set_pose, add_fixed_constraint, COKE_URDF, get_unit_vector, multiply, unit_quat,\
+    get_pose
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import set_joint_force_limits
-
+from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import Pose as PrimPose
 import pybullet as p
-from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import set_joint_force_limits, Attach, control_commands, Grasp, GripperCommand
+from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import set_joint_force_limits, Attach, control_commands,\
+    Grasp, GripperCommand, get_top_grasps, GRASP_LENGTH, APPROACH_DISTANCE, set_joint_positions_torque, get_arm_joints
 
 
 def sample_placements(body_surfaces, obstacles=None, min_distances={}):
@@ -74,17 +76,89 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=2):
     plate_z = stable_z(plate, table2)
     set_point(plate, Point(x=-0.35, z=plate_z))
     surfaces = [table, plate]
+    pick_area = table
+    place_area = table2
 
     blocks = [load_pybullet(COKE_URDF) for _ in range(num)]
     initial_surfaces = {block: table for block in blocks}
 
     min_distances = {block: 0.02 for block in blocks}
     sample_placements(initial_surfaces)
-    set_point(blocks[0], (0.45569211602211, -0.1283925175666809, 0.4259999990463257))
+    set_point(blocks[0], (0.35, 0, 0.4259999990463257))
     enable_gravity()
     return Problem(robot=panda, movable=blocks, arms=[arm], grasp_types=[grasp_type], surfaces=surfaces,
                 #    goal_holding=[(arm, plate)],
                    goal_on=[(block, plate) for block in blocks], base_limits=base_limits)
+
+def packed_force_aware_transfer_traj_only(arm='right', grasp_type='top', num=1):
+    # TODO: packing problem where you have to place in one direction
+    print('in packed')
+    base_extent = 5.0
+
+    base_limits = (-base_extent/2.*np.ones(2), base_extent/2.*np.ones(2))
+
+    X_OFFSET = 0.35
+
+    plate_width = 0.2
+    print('Width:', plate_width)
+    plate_width = min(plate_width, 0.04)
+    plate_height = 0.005
+
+    initial_conf = TOP_HOLDING_TRAJ_START
+    add_data_path()
+    floor = load_pybullet("plane.urdf")
+    panda = create_panda()
+    set_point(panda,point=Point(0,0, 0.1))
+    set_joint_force_limits(panda, arm)
+    set_arm_conf(panda, arm, initial_conf)
+    open_arm(panda, arm)
+
+    table = create_table(length=0.35, height=0.4, width = 0.3)
+    table2 = create_table(length=0.35, height=0.4, width = 0.3)
+    r_left_finger_joint = joint_from_name(panda, 'r_panda_finger_joint1')
+
+    set_point(table, point=Point(X_OFFSET,0, 0.02))
+    set_point(table2, point=Point(-X_OFFSET,0, 0.02))
+
+    plate = create_box(plate_width, plate_width, plate_height, color=GREEN)
+    plate_z = stable_z(plate, table2)
+    set_point(plate, Point(x=-X_OFFSET, z=plate_z))
+    surfaces = [table, plate]
+    pick_area = table
+    place_area = table2
+
+    block = load_pybullet(COKE_URDF)
+    blocks = [block]
+    block_z = stable_z(block, table)
+    start_point = (X_OFFSET-0.042, 0.0, block_z)
+
+    target_z = stable_z(block, plate)
+    target_point = (-X_OFFSET, 0.0, target_z)
+
+    set_point(block, target_point)
+    target_pose = get_pose(block)
+    target_pose = PrimPose(block, target_pose)
+    g = get_top_grasps(block, grasp_length=GRASP_LENGTH)[0]
+
+    set_point(block, start_point)
+    close_arm(panda, arm)
+
+    start_pose = get_pose(block)
+    grasp = Grasp('top', block, start_pose, [], [])
+    attach = Attach(panda, arm, grasp, block)#Attach(bi_panda, arm, grasp, tray)
+    control_commands([attach])
+    set_joint_positions_torque(panda, get_arm_joints(panda, arm), TOP_HOLDING_TRAJ_START)
+    approach_vector = APPROACH_DISTANCE*get_unit_vector([1, 0, 0])
+    target_grasp = Grasp(grasp_type="top", body=block, value=g, approach=multiply((approach_vector, unit_quat()), g), carry=TOP_HOLDING_TRAJ_START)
+
+    enable_gravity()
+
+
+
+    return Problem(robot=panda, movable=blocks, arms=[arm], grasp_types=[grasp_type], surfaces=surfaces,
+                #    goal_holding=[(arm, plate)],
+                   goal_on=[(block, plate) for block in blocks], base_limits=base_limits, target=block,\
+                    target_pose=target_pose, end_grasp=target_grasp)
 
 
 #######################################################
@@ -135,7 +209,7 @@ def packed_force_aware(arm='right', grasp_type='top', num=2):
 
     min_distances = {block: 0.02 for block in blocks}
     sample_placements(initial_surfaces)
-    set_point(blocks[0], (0.49569211602211, -0.1283925175666809, 0.4259999990463257))
+    set_point(blocks[0], (0.49569211602211, -0.0283925175666809, 0.4259999990463257))
     enable_gravity()
     return Problem(robot=panda, movable=blocks, arms=[arm], grasp_types=[grasp_type], surfaces=surfaces,
                 #    goal_holding=[(arm, plate)],
@@ -223,5 +297,6 @@ def blocked(arm='left', grasp_type='side', num=1):
 PROBLEMS = [
     packed_force_aware,
     packed_force_aware_transfer,
-    blocked
+    blocked,
+    packed_force_aware_transfer_traj_only
 ]

@@ -2,18 +2,17 @@
 
 from __future__ import print_function
 
-from examples.pybullet.bi_panda_force_aware.streams import get_cfree_approach_pose_test, get_cfree_pose_pose_test, get_cfree_traj_pose_test, \
+from examples.pybullet.panda_force_aware.streams import get_cfree_approach_pose_test, get_cfree_pose_pose_test, get_cfree_traj_pose_test, \
     get_cfree_traj_grasp_pose_test, distance_fn
 
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import Pose, Conf, get_ik_ir_gen, \
     get_stable_gen, get_grasp_gen, control_commands, get_torque_limits_not_exceded_test, \
-    get_stable_gen_dumb, get_torque_limits_mock_test, get_ik_ir_gen_no_reconfig, get_objects_on_target, hack_table_place, \
-    get_ik_ir_gen_force_aware, get_torques_exceded_global, torques_exceded, reset_torques_exceded_global
+    get_stable_gen_dumb, get_torque_limits_mock_test, get_ik_ir_gen_no_reconfig, hack_table_place,\
+    get_ik_ir_gen_force_aware, get_torques_exceded_global, get_mass, METHOD, reset_torques_exceded_global
 from examples.pybullet.utils.pybullet_tools.panda_utils import get_arm_joints, ARM_NAMES, get_group_joints, \
-    get_group_conf, get_group_links, BI_PANDA_GROUPS, arm_from_arm, TARGET, PLATE_GRASP_LEFT_ARM
+    get_group_conf, get_group_links, BI_PANDA_GROUPS, arm_from_arm, TARGET, PLATE_GRASP_LEFT_ARM, TIME_STEP
 from examples.pybullet.utils.pybullet_tools.utils import connect, get_pose, is_placement, disconnect, \
-    get_joint_positions, HideOutput, LockRenderer, wait_for_user, get_max_limit, set_joint_positions_torque, set_point,\
-    get_mass, is_b1_on_b2, body_from_name, remove_fixed_constraint
+    get_joint_positions, HideOutput, LockRenderer, wait_for_user, get_max_limit, set_joint_positions_torque, set_point
 from examples.pybullet.namo.stream import get_custom_limits
 
 from pddlstream.algorithms.meta import create_parser, solve
@@ -26,16 +25,16 @@ from pddlstream.language.function import FunctionInfo
 from pddlstream.language.stream import StreamInfo, DEBUG
 
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import apply_commands, State
-from examples.pybullet.utils.pybullet_tools.utils import draw_base_limits, WorldSaver, has_gui, str_from_object, joint_from_name
+from examples.pybullet.utils.pybullet_tools.utils import draw_base_limits, WorldSaver, has_gui, str_from_object, joint_from_name, is_pose_on_r, body_from_name, remove_fixed_constraint
 
 from examples.pybullet.panda_force_aware.problems import PROBLEMS
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import Pose, Conf, get_ik_ir_gen, get_motion_gen, \
     get_stable_gen, get_grasp_gen, Attach, Detach, Clean, Cook, control_commands, \
-    get_gripper_joints, GripperCommand, apply_commands, State
+    get_gripper_joints, GripperCommand, apply_commands, State, FixObj, get_mass_global, set_mass_global
 import time
 import datetime
-import csv
 import pybullet as p
+import csv
 
 # TODO: collapse similar streams into a single stream when reodering
 
@@ -216,27 +215,26 @@ def main(verbose=True):
 
 
     parser = create_parser()
-    parser.add_argument('-problem', default='packed_force_aware', help='The name of the problem to solve')
-    parser.add_argument('-loops', default=3, type=int, help='The number of itterations to run experiment')
-    parser.add_argument('-n', '--number', default=6, type=int, help='The number of objects')
+    parser.add_argument('-problem', default='packed_force_aware_transfer', help='The name of the problem to solve')
+    parser.add_argument('-loops', default=10, type=int, help='The number of itterations to run experiment')
+    parser.add_argument('-n', '--number', default=1, type=int, help='The number of objects')
     parser.add_argument('-cfree', action='store_true', help='Disables collisions')
     parser.add_argument('-deterministic', action='store_true', help='Uses a deterministic sampler')
     parser.add_argument('-optimal', action='store_true', help='Runs in an anytime mode')
-    parser.add_argument('-t', '--max_time', default=30, type=int, help='The max time')
+    parser.add_argument('-t', '--max_time', default=600, type=int, help='The max time')
     parser.add_argument('-teleport', action='store_true', help='Teleports between configurations')
     parser.add_argument('-enable', action='store_true', help='Enables rendering during planning')
     parser.add_argument('-simulate', action='store_true', help='Simulates the system')
     args = parser.parse_args()
     print('Arguments:', args)
 
-    data_dir = '/home/liam/exp_data_cfg2/'
+    data_dir = '/home/liam/success_rate_data/'
     timestamp = str(datetime.datetime.now())
-    timestamp = "{}_{}".format(timestamp.split(' ')[0], timestamp.split(' ')[1])
-    datafile = data_dir + timestamp + "_" + args.problem + '.csv'
-    data = ["TotalTime", "ExecutionTime", "Solved", "TotalItems", "SuccessfulDeliveries", "TorquesExceded", "TrayOnTable", "MassPerObject"]
+    datafile = data_dir + timestamp + "_" + args.problem + "_" + METHOD + '.csv'
+    header = ["TotalTime", "ExecutionTime", "Solved", "TotalItems", "TorquesExceded", "MassPerObject", "Method"]
     with open(datafile, 'w') as file:
         writer = csv.writer(file)
-        writer.writerow(data)
+        writer.writerow(header)
 
 
     problem_fn_from_name = {fn.__name__: fn for fn in PROBLEMS}
@@ -252,6 +250,8 @@ def main(verbose=True):
       print('connected to gui')
       with HideOutput():
           problem = problem_fn(num=args.number)
+      set_mass_global(get_mass(problem.movable[-1]))
+
       print('problem found')
       draw_base_limits(problem.base_limits, color=(1, 0, 0))
       saver = WorldSaver()
@@ -310,18 +310,14 @@ def main(verbose=True):
         total_time = time.time() - start_time
         exec_time = -1
         items = args.number
-        deliveries = 0
         solved = False
-        trayDelivered = True
-        reconfig_count = 0
         torques_exceded = get_torques_exceded_global()
         mass = get_mass(problem.movable[-1])
-        print(total_time, exec_time, solved, reconfig_count, items, deliveries, torques_exceded, trayDelivered, mass)
-        data = [total_time, exec_time, solved, items, trayDelivered, deliveries]
+        data = [total_time, exec_time, solved, items, torques_exceded, mass, METHOD]
         with open(datafile, 'a') as file:
             writer = csv.writer(file)
             writer.writerow(data)
-            disconnect()
+        disconnect()
         continue
 
       with LockRenderer(lock=not args.enable):
@@ -330,11 +326,8 @@ def main(verbose=True):
           saver.restore()
       p.setRealTimeSimulation(True)
 
-      # jointPos = get_joint_positions(problem.robot, jointNums)
-    #   set_joint_positions_torque(problem.robot, jointNums, PLATE_GRASP_LEFT_ARM)
       draw_base_limits(problem.base_limits, color=(1, 0, 0))
-    #   jointPos = get_joint_positions(problem.robot, jointNums)
-    #   set_joint_positions_torque(problem.robot, jointNums, jointPos)
+
       exec_time = time.time()
       state = State()
       if args.simulate:
@@ -342,26 +335,24 @@ def main(verbose=True):
       else:
         # for body in problem.movable:
         #     remove_fixed_constraint(body, body_from_name(TARGET), -1)
-        time_step = None if args.teleport else 0.01
+        time_step = None if args.teleport else TIME_STEP
         state = apply_commands(state, commands, time_step)
 
-    #   jointPos = get_joint_positions(problem.robot, jointNums)
-    #   set_joint_positions_torque(problem.robot, jointNums, jointPos)
 
-      total_time = time.time() - start_time
-      exec_time = time.time() - exec_time
-      items = args.number
-      deliveries = len(get_objects_on_target(problem, target = 3))
-      solved = True
-      mass = get_mass(problem.movable[0])
-      trayDelivered = is_b1_on_b2(3, 2)
-      torques_exceded = get_torques_exceded_global()
-      print(total_time, exec_time, items, deliveries, mass)
-      data = [total_time, exec_time, solved, items, deliveries, torques_exceded, trayDelivered, mass]
-      with open(datafile, 'a') as file:
-        writer = csv.writer(file)
-        writer.writerow(data)
-      p.setRealTimeSimulation(True)
+
+        total_time = time.time() - start_time
+        exec_time = time.time() - exec_time
+        items = args.number
+        solved = True
+        mass = get_mass(problem.movable[0])
+        torques_exceded = get_torques_exceded_global()
+        data = [total_time, exec_time, solved, items, torques_exceded, mass, METHOD]
+        with open(datafile, 'a') as file:
+            writer = csv.writer(file)
+            # writer.writerow(header)
+            writer.writerow(data)
+      del problem
+      del saver
       disconnect()
 
 if __name__ == '__main__':

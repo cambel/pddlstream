@@ -8,7 +8,7 @@ from examples.pybullet.panda_force_aware.streams import get_cfree_approach_pose_
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import Pose, Conf, get_ik_ir_gen, \
     get_stable_gen, get_grasp_gen, control_commands, get_torque_limits_not_exceded_test, \
     get_stable_gen_dumb, get_torque_limits_mock_test, get_ik_ir_gen_no_reconfig, hack_table_place,\
-    get_ik_ir_gen_force_aware, get_torques_exceded_global, get_mass
+    get_ik_ir_gen_force_aware, get_torques_exceded_global, get_mass, METHOD, get_mass_global, set_mass_global
 from examples.pybullet.utils.pybullet_tools.panda_utils import get_arm_joints, ARM_NAMES, get_group_joints, \
     get_group_conf, get_group_links, BI_PANDA_GROUPS, arm_from_arm, TARGET, PLATE_GRASP_LEFT_ARM, TIME_STEP
 from examples.pybullet.utils.pybullet_tools.utils import connect, get_pose, is_placement, disconnect, \
@@ -255,7 +255,7 @@ def main(verbose=True):
         #'MoveCost': FunctionInfo(lambda t: BASE_CONSTANT),
     }
     #stream_info = {}
-
+    set_mass_global(get_mass(problem.movable[-1]))
     _, _, _, stream_map, init, goal = pddlstream_problem
     print('Init:', init)
     print('Goal:', goal)
@@ -327,7 +327,7 @@ def main(verbose=True):
         solved = True
         mass = get_mass(problem.movable[0])
         torques_exceded = get_torques_exceded_global()
-        data = [total_time, exec_time, solved, items, torques_exceded, mass, "rne"]
+        data = [total_time, exec_time, solved, items, torques_exceded, mass, METHOD]
         with open(datafile, 'a') as file:
             writer = csv.writer(file)
             # writer.writerow(header)
