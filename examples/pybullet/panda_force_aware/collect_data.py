@@ -35,6 +35,8 @@ import time
 import datetime
 import pybullet as p
 import csv
+import numpy as np
+import os
 
 # TODO: collapse similar streams into a single stream when reodering
 
@@ -169,6 +171,8 @@ def post_process(problem, plan, teleport=False):
             else:
                 print("no reconfig")
                 [t2] = trajs
+                # problem.extract_traj_data(t2)
+                # problem.extract_traj_data(t2.reverse())
                 new_commands = [t2, close_gripper, attach, t2.reverse()]
         elif name == 'place':
             a, b, p, g, _, c, _ = args
@@ -185,6 +189,8 @@ def post_process(problem, plan, teleport=False):
             else:
                 print("no reconfig")
                 [t2] = c.commands
+                # problem.extract_traj_data(t2)
+                # problem.extract_traj_data(t2.reverse())
                 new_commands = [t2, detach, open_gripper, t2.reverse()]
         elif name == 'clean': # TODO: add text or change color?
             body, sink = args
@@ -206,7 +212,6 @@ def post_process(problem, plan, teleport=False):
         commands += new_commands
     return commands, reconfig_count
 
-data_dir = '/home/liam/exp_data_cfg2/'
 
 def main(verbose=True):
     # TODO: could work just on postprocessing
@@ -221,18 +226,31 @@ def main(verbose=True):
     parser.add_argument('-cfree', action='store_true', help='Disables collisions')
     parser.add_argument('-deterministic', action='store_true', help='Uses a deterministic sampler')
     parser.add_argument('-optimal', action='store_true', help='Runs in an anytime mode')
-    parser.add_argument('-t', '--max_time', default=600, type=int, help='The max time')
+    parser.add_argument('-t', '--max_time', default=400, type=int, help='The max time')
     parser.add_argument('-teleport', action='store_true', help='Teleports between configurations')
     parser.add_argument('-enable', action='store_true', help='Enables rendering during planning')
     parser.add_argument('-simulate', action='store_true', help='Simulates the system')
     args = parser.parse_args()
     print('Arguments:', args)
+    DISTANCE = 0.5
+    MASS = '9kg'
+    data_dir = '/home/liam/success_rate_mass_data_random/'
 
-    data_dir = '/home/liam/success_rate_data/'
     timestamp = str(datetime.datetime.now())
-    datafile = data_dir + timestamp + "_" + args.problem + "_" + METHOD + '.csv'
+    f = f'{data_dir} {timestamp}_{args.problem}_{METHOD}'
+    if 'dist' in data_dir:
+        f = f'{f}_{DISTANCE}'
+    if 'mass' in data_dir:
+        f = f'{f}_{MASS}'
+    os.mkdir(f)
+    f += '/'
+    datafileCsv = f + 'success_data.csv'
     header = ["TotalTime", "ExecutionTime", "Solved", "TotalItems", "TorquesExceded", "MassPerObject", "Method"]
-    with open(datafile, 'w') as file:
+
+
+    traj_file_base = f + timestamp + '_' + 'trajectory_data'
+
+    with open(datafileCsv, 'w') as file:
         writer = csv.writer(file)
         writer.writerow(header)
 
@@ -244,12 +262,19 @@ def main(verbose=True):
     problem_fn = problem_fn_from_name[args.problem]
     print('problem fn loaded')
     global torques_exceded
-    for _ in range(args.loops):
+
+    for run in range(args.loops):
+      traj_file = f'{traj_file_base}_{run}.npz'
       reset_torques_exceded_global()
       connect(use_gui=True)
       print('connected to gui')
       with HideOutput():
-          problem = problem_fn(num=args.number)
+          problem = problem_fn(num=args.number, dist=DISTANCE)
+          if any([not is_pose_on_r(get_pose(problem.movable[-1]), problem.surfaces[0])]):
+            run = run - 1
+            del problem
+            disconnect()
+            continue
       set_mass_global(get_mass(problem.movable[-1]))
 
       print('problem found')
@@ -314,9 +339,10 @@ def main(verbose=True):
         torques_exceded = get_torques_exceded_global()
         mass = get_mass(problem.movable[-1])
         data = [total_time, exec_time, solved, items, torques_exceded, mass, METHOD]
-        with open(datafile, 'a') as file:
+        with open(datafileCsv, 'a') as file:
             writer = csv.writer(file)
             writer.writerow(data)
+        # np.savez(traj_file, x=problem.solution_confs, y=problem.solution_vels, z=problem.solution_accels, xx=problem.solution_torques_rne, yy=problem.solution_torques_dyn, zz=problem.solution_torques_arne)
         disconnect()
         continue
 
@@ -325,7 +351,7 @@ def main(verbose=True):
           commands, reconfig_count = post_process(problem, plan, teleport=args.teleport)
           saver.restore()
       p.setRealTimeSimulation(True)
-
+    #   np.savez(traj_file, x=problem.solution_confs, y=problem.solution_vels, z=problem.solution_accels, xx=problem.solution_torques_rne, yy=problem.solution_torques_dyn, zz=problem.solution_torques_arne)
       draw_base_limits(problem.base_limits, color=(1, 0, 0))
 
       exec_time = time.time()
@@ -333,8 +359,6 @@ def main(verbose=True):
       if args.simulate:
           control_commands(commands)
       else:
-        # for body in problem.movable:
-        #     remove_fixed_constraint(body, body_from_name(TARGET), -1)
         time_step = None if args.teleport else TIME_STEP
         state = apply_commands(state, commands, time_step)
 
@@ -347,7 +371,7 @@ def main(verbose=True):
         mass = get_mass(problem.movable[0])
         torques_exceded = get_torques_exceded_global()
         data = [total_time, exec_time, solved, items, torques_exceded, mass, METHOD]
-        with open(datafile, 'a') as file:
+        with open(datafileCsv, 'a') as file:
             writer = csv.writer(file)
             # writer.writerow(header)
             writer.writerow(data)

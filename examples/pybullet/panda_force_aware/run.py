@@ -107,8 +107,8 @@ def pddlstream_from_problem(problem, base_limits=None, collisions=True, teleport
     goal_formula = And(*goal_formula)
 
     custom_limits = {}
-    if base_limits is not None:
-        custom_limits.update(get_custom_limits(robot, problem.base_limits))
+    # if base_limits is not None:
+    #     custom_limits.update(get_custom_limits(robot, problem.base_limits))
 
 
 
@@ -307,7 +307,6 @@ def main(verbose=True):
     wait_for_user()
     state = State()
     p.setRealTimeSimulation(True)
-    # control_commands(commands)
 
     time_step = None if args.teleport else TIME_STEP
     for command in commands:
@@ -338,8 +337,7 @@ def main(verbose=True):
 
     # p.setRealTimeSimulation(True)
     # hack_table_place(problem, state)
-    while True:
-        continue
+    wait_for_user()
     disconnect()
 
 if __name__ == '__main__':

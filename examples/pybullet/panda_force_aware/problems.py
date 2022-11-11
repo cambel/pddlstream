@@ -37,11 +37,11 @@ def sample_placements(body_surfaces, obstacles=None, min_distances={}):
     return True
 
 #######################################################
-def packed_force_aware_transfer(arm='right', grasp_type='top', num=2):
+def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
     # TODO: packing problem where you have to place in one direction
     print('in packed')
     base_extent = 5.0
-
+    X_DIST = dist
     base_limits = (-base_extent/2.*np.ones(2), base_extent/2.*np.ones(2))
     block_width = 0.04
     block_height = 0.1
@@ -59,22 +59,23 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=2):
     initial_conf = get_carry_conf(arm, grasp_type)
     add_data_path()
     floor = load_pybullet("plane.urdf")
+    set_point(floor, (0,0,-0.001))
     panda = create_panda()
-    set_point(panda,point=Point(0,0, 0.1))
+    # set_point(panda,point=Point(0,0, 0.1))
     set_joint_force_limits(panda, arm)
     set_arm_conf(panda, arm, initial_conf)
     open_arm(panda, arm)
-
-    table = create_table(length=0.35, height=0.4, width = 0.3)
-    table2 = create_table(length=0.35, height=0.4, width = 0.3)
+    # set_point(panda, (0,0,0.4))
+    table = create_table(length=.8, height=0.1, width = 0.6)
+    table2 = create_table(length=0.35, height=0.1, width = 0.3)
     r_left_finger_joint = joint_from_name(panda, 'r_panda_finger_joint1')
 
-    set_point(table, point=Point(0.35,0, 0.02))
-    set_point(table2, point=Point(-0.35,0, 0.02))
+    set_point(table, point=Point(0.55,0, 0))
+    set_point(table2, point=Point(-0.45,0, 0))
 
     plate = create_box(plate_width, plate_width, plate_height, color=GREEN)
     plate_z = stable_z(plate, table2)
-    set_point(plate, Point(x=-0.35, z=plate_z))
+    set_point(plate, Point(x=-0.45, z=plate_z))
     surfaces = [table, plate]
     pick_area = table
     place_area = table2
@@ -84,11 +85,16 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=2):
 
     min_distances = {block: 0.02 for block in blocks}
     sample_placements(initial_surfaces)
-    set_point(blocks[0], (0.35, 0, 0.4259999990463257))
+    start_dist = get_pose(blocks[0])
+    theta = math.atan2(start_dist[0][1], start_dist[0][0])
+    new_x = X_DIST * math.cos(theta)
+    new_y = X_DIST * math.sin(theta)
+    obj_z = stable_z(blocks[0], table)
+    set_point(blocks[0], (new_x, new_y, obj_z))
     enable_gravity()
     return Problem(robot=panda, movable=blocks, arms=[arm], grasp_types=[grasp_type], surfaces=surfaces,
                 #    goal_holding=[(arm, plate)],
-                   goal_on=[(block, plate) for block in blocks], base_limits=base_limits)
+                   goal_on=[(block, plate) for block in blocks], base_limits=base_limits, dist = X_DIST)
 
 def packed_force_aware_transfer_traj_only(arm='right', grasp_type='top', num=1):
     # TODO: packing problem where you have to place in one direction

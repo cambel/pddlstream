@@ -13,7 +13,7 @@ def test_packed_transfer_traj_only():
 
 def main():
   connect(use_gui=True)
-  test_packed_transfer_traj_only()
+  test_packed_transfer()
   p.setRealTimeSimulation(True)
   wait_for_user()
   disconnect()
