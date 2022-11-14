@@ -6,18 +6,18 @@ import math
 from examples.pybullet.utils.pybullet_tools.bi_panda_problems import create_bi_panda, create_short_table, Problem, create_table, create_panda
 from examples.pybullet.utils.pybullet_tools.panda_utils import get_other_arm, get_carry_conf, set_arm_conf, open_arm, \
     arm_conf, REST_LEFT_ARM, close_arm, set_group_conf, STRAIGHT_LEFT_ARM, get_extended_conf, get_group_links, PLATE_GRASP_LEFT_ARM,\
-    get_max_limit, get_gripper_joints, TOP_HOLDING_LEFT_ARM_CENTERED, TOP_HOLDING_TRAJ_START, get_top_cylinder_grasps
+    get_max_limit, get_gripper_joints, TOP_HOLDING_LEFT_ARM_CENTERED, TOP_HOLDING_TRAJ_START, get_top_cylinder_grasps, TORQUE_TEST_LEFT_ARM
 from examples.pybullet.utils.pybullet_tools.utils import get_bodies, sample_placement, pairwise_collision, \
     add_data_path, load_pybullet, set_point, Point, create_box, stable_z, joint_from_name, get_point, wait_for_user,\
     RED, GREEN, BLUE, BLACK, WHITE, BROWN, TAN, GREY, create_cylinder, enable_gravity, link_from_name, get_link_pose, \
     Pose, set_joint_position, TRAY_URDF, set_pose, add_fixed_constraint, COKE_URDF, get_unit_vector, multiply, unit_quat,\
-    get_pose
+    get_pose, HIRO_TABLE_2, HIRO_TABLE_1, WALL_URDF, quat_from_euler
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import set_joint_force_limits
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import Pose as PrimPose
 import pybullet as p
 from examples.pybullet.utils.pybullet_tools.panda_primitives_v2 import set_joint_force_limits, Attach, control_commands,\
     Grasp, GripperCommand, get_top_grasps, GRASP_LENGTH, APPROACH_DISTANCE, set_joint_positions_torque, get_arm_joints
-
+from random import uniform
 
 def sample_placements(body_surfaces, obstacles=None, min_distances={}):
     if obstacles is None:
@@ -35,9 +35,8 @@ def sample_placements(body_surfaces, obstacles=None, min_distances={}):
                 obstacles.append(body)
                 break
     return True
-
-#######################################################
-def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
+#####################################################
+def packed_force_aware_transfer_HIRO(arm='right', grasp_type='top', num=1, dist=0.5, high_angle=math.pi/4, low_angle = -math.pi/4):
     # TODO: packing problem where you have to place in one direction
     print('in packed')
     base_extent = 5.0
@@ -59,7 +58,81 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
     initial_conf = get_carry_conf(arm, grasp_type)
     add_data_path()
     floor = load_pybullet("plane.urdf")
-    set_point(floor, (0,0,-0.001))
+    set_point(floor, (0,0,-1))
+    panda = create_panda()
+    # set_point(panda,point=Point(0,0, 0.1))
+    set_joint_force_limits(panda, arm)
+    set_arm_conf(panda, arm, initial_conf)
+    open_arm(panda, arm)
+    # set_point(panda, (0,0,0.4))
+    table = load_pybullet(HIRO_TABLE_1)
+    set_point(table, (-0.2994,0,-0.5131))
+    add_fixed_constraint(table, floor)
+    table2 = load_pybullet(HIRO_TABLE_2)
+    set_point(table2, (0.6218, 0,-0.53645))
+    add_fixed_constraint(table2, floor)
+    wall = load_pybullet(WALL_URDF)
+    set_pose(wall, ((-0.7366, 0,0),quat_from_euler((0,0,0))))
+    add_fixed_constraint(wall, floor)
+    # add_fixed_constraint(table, table2)
+
+
+    # set_point(table, point=Point(0.55,0, 0))
+    # set_point(table2, point=Point(-0.45,0, 0))
+    start_plate = create_box(.5, .9, .01, color=GREEN)
+    plate_z = stable_z(start_plate, table)
+    set_point(start_plate, (.5, 0, plate_z))
+    plate = create_box(plate_width, plate_width, plate_height, color=GREEN)
+    plate_z = stable_z(plate, table)
+    set_point(plate, Point(x=0, y=-.45, z=plate_z ))
+    add_fixed_constraint(plate, table)
+    surfaces = [table, plate]
+    pick_area = table
+    place_area = table2
+
+    blocks = [load_pybullet(COKE_URDF) for _ in range(num)]
+    initial_surfaces = {block: start_plate for block in blocks}
+
+    min_distances = {block: 0.02 for block in blocks}
+    sample_placements(initial_surfaces)
+    start_dist = get_pose(blocks[0])
+    theta = uniform(low_angle, high_angle)
+    new_x = X_DIST * math.cos(theta)
+    new_y = X_DIST * math.sin(theta)
+    obj_z = stable_z(blocks[0], start_plate)
+    set_point(blocks[0], (new_x, new_y, obj_z))
+    enable_gravity()
+    return Problem(robot=panda, movable=blocks, arms=[arm], grasp_types=[grasp_type], surfaces=surfaces,
+                #    goal_holding=[(arm, plate)],
+                   goal_on=[(block, plate) for block in blocks], base_limits=base_limits, dist = X_DIST)
+
+
+
+#######################################################
+def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
+    # TODO: packing problem where you have to place in one direction
+    print('in packed')
+    base_extent = 5.0
+    X_DIST = dist
+    base_limits = (-base_extent/2.*np.ones(2), base_extent/2.*np.ones(2))
+    block_width = 0.04
+    block_height = 0.1
+    #block_height = 2*block_width
+    block_area = block_width*block_width
+
+    #plate_width = 2*math.sqrt(num*block_area)
+    plate_width = 0.2
+    #plate_width = 0.28
+    #plate_width = 0.3
+    print('Width:', plate_width)
+    plate_width = min(plate_width, 0.04)
+    plate_height = 0.005
+
+    # initial_conf = get_carry_conf(arm, grasp_type)
+    initial_conf = TORQUE_TEST_LEFT_ARM
+    add_data_path()
+    floor = load_pybullet("plane.urdf")
+    set_point(floor, (0,0,-.001))
     panda = create_panda()
     # set_point(panda,point=Point(0,0, 0.1))
     set_joint_force_limits(panda, arm)
@@ -68,7 +141,6 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
     # set_point(panda, (0,0,0.4))
     table = create_table(length=.8, height=0.1, width = 0.6)
     table2 = create_table(length=0.35, height=0.1, width = 0.3)
-    r_left_finger_joint = joint_from_name(panda, 'r_panda_finger_joint1')
 
     set_point(table, point=Point(0.55,0, 0))
     set_point(table2, point=Point(-0.45,0, 0))
@@ -87,8 +159,8 @@ def packed_force_aware_transfer(arm='right', grasp_type='top', num=1, dist=0.5):
     sample_placements(initial_surfaces)
     start_dist = get_pose(blocks[0])
     theta = math.atan2(start_dist[0][1], start_dist[0][0])
-    new_x = X_DIST * math.cos(theta)
-    new_y = X_DIST * math.sin(theta)
+    new_x = X_DIST * math.sin(theta)
+    new_y = X_DIST * math.cos(theta)
     obj_z = stable_z(blocks[0], table)
     set_point(blocks[0], (new_x, new_y, obj_z))
     enable_gravity()
@@ -304,5 +376,6 @@ PROBLEMS = [
     packed_force_aware,
     packed_force_aware_transfer,
     blocked,
-    packed_force_aware_transfer_traj_only
+    packed_force_aware_transfer_traj_only,
+    packed_force_aware_transfer_HIRO
 ]

@@ -147,9 +147,11 @@ def pddlstream_from_problem(problem, base_limits=None, collisions=True, teleport
 
 #######################################################
 def post_process(problem, plan, teleport=False):
+    reconfig_count = 0
     if plan is None:
-        return None
+        return None, reconfig_count
     commands = []
+    time_stamps = []
     for i, (name, args) in enumerate(plan):
         if name == 'move_base':
             c = args[-1]
@@ -162,13 +164,21 @@ def post_process(problem, plan, teleport=False):
             if len(trajs) == 2:
                 print("reconfig present")
                 [t1, t2] = trajs
+                reconfig_count += 1
                 new_commands = [t1, t2, close_gripper, attach, t2.reverse()]
+
             else:
                 print("no reconfig")
                 [t2] = trajs
+                problem.extract_traj_data(t2)
+                time_stamps = time_stamps + problem.dts[-1]
+                time_stamps.append(.1)
+                time_stamps.append(0.1)
+                problem.extract_traj_data(t2.reverse())
+                time_stamps = time_stamps + problem.dts[-1]
                 new_commands = [t2, close_gripper, attach, t2.reverse()]
         elif name == 'place':
-            a, b, p, g, _, c, r = args
+            a, b, p, g, _, c, _ = args
             trajectories = c.commands
             gripper_joint = get_gripper_joints(problem.robot, a)[0]
             position = 0.05
@@ -177,10 +187,17 @@ def post_process(problem, plan, teleport=False):
             if len(trajectories) == 2:
                 print("reconfig present")
                 [t1, t2] = c.commands
+                reconfig_count+=1
                 new_commands = [t1, t2, detach, open_gripper, t2.reverse()]
             else:
                 print("no reconfig")
                 [t2] = c.commands
+                problem.extract_traj_data(t2)
+                time_stamps = time_stamps + problem.dts[-1]
+                time_stamps.append(0.1)
+                time_stamps.append(0.1)
+                problem.extract_traj_data(t2.reverse())
+                time_stamps = time_stamps + problem.dts[-1]
                 new_commands = [t2, detach, open_gripper, t2.reverse()]
         elif name == 'clean': # TODO: add text or change color?
             body, sink = args
@@ -200,7 +217,7 @@ def post_process(problem, plan, teleport=False):
             raise ValueError(name)
         print(i, name, args, new_commands)
         commands += new_commands
-    return commands
+    return commands, reconfig_count, time_stamps
 
 def main(verbose=True):
     # TODO: could work just on postprocessing
@@ -208,7 +225,7 @@ def main(verbose=True):
     # TODO: option to only consider costs during local optimization
 
     parser = create_parser()
-    parser.add_argument('-problem', default='packed_force_aware_transfer', help='The name of the problem to solve')
+    parser.add_argument('-problem', default='packed_force_aware_transfer_HIRO', help='The name of the problem to solve')
     parser.add_argument('-n', '--number', default=3, type=int, help='The number of objects')
     parser.add_argument('-cfree', action='store_true', help='Disables collisions')
     parser.add_argument('-deterministic', action='store_true', help='Uses a deterministic sampler')
@@ -293,7 +310,7 @@ def main(verbose=True):
 
     with LockRenderer(lock=not args.enable):
         problem.remove_gripper()
-        commands = post_process(problem, plan, teleport=args.teleport)
+        commands, _, time_steps = post_process(problem, plan, teleport=args.teleport)
         saver.restore()
 
 
@@ -303,17 +320,21 @@ def main(verbose=True):
     # jointPos = get_joint_positions(problem.robot, jointNums)
     # set_joint_positions_torque(problem.robot, jointNums, jointPos)
     # set_joint_positions_torque(problem.robot, jointNums, PLATE_GRASP_LEFT_ARM)
-
+    print(time_steps)
     wait_for_user()
     state = State()
     p.setRealTimeSimulation(True)
 
     time_step = None if args.teleport else TIME_STEP
+    if time_steps is None or len(time_steps) < len(commands):
+        print('WHY ISNT THERE ENOUT TIME STAMPS #####################')
+        time_steps = time_step
+
     for command in commands:
         print('peepeppepepep')
         print(type(command))
     exec_time = time.time()
-    state = apply_commands(state, commands, time_step)
+    state = apply_commands(state, commands, time_steps)
 
     if args.takedata:
         data_dir = '/home/liam/exp_data/'

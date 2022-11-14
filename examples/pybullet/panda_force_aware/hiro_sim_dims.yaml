@@ -1,0 +1,25 @@
+table_HIRO_1:
+  filename:
+    panda: table_panda_HIRO_1.urdf
+  position:
+    panda: [-0.2794,0,-0.5131]
+  orientation:
+    panda: [0,0,0]
+table_HIRO_2:
+  filename:
+    panda: table_panda_HIRO_2.urdf
+  position:
+    panda: [0.6218,0,-0.53645]
+  orientation:
+    panda: [0,0,0]
+wall:
+  filename:
+    panda: wall.urdf
+  position:
+    panda: [-0.7366,0,0]
+  orientation:
+    panda: [0,0,0]
+plane:
+  position:
+    panda: [0, 0, -1]
+    sawyer: [0, 0, -0.5]

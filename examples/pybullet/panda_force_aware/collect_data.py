@@ -154,6 +154,7 @@ def post_process(problem, plan, teleport=False):
     if plan is None:
         return None, reconfig_count
     commands = []
+    time_stamps = []
     for i, (name, args) in enumerate(plan):
         if name == 'move_base':
             c = args[-1]
@@ -168,11 +169,14 @@ def post_process(problem, plan, teleport=False):
                 [t1, t2] = trajs
                 reconfig_count += 1
                 new_commands = [t1, t2, close_gripper, attach, t2.reverse()]
+
             else:
                 print("no reconfig")
                 [t2] = trajs
-                # problem.extract_traj_data(t2)
-                # problem.extract_traj_data(t2.reverse())
+                problem.extract_traj_data(t2)
+                time_stamps = time_stamps + problem.dts[-1]
+                problem.extract_traj_data(t2.reverse())
+                time_stamps = time_stamps + problem.dts[-1]
                 new_commands = [t2, close_gripper, attach, t2.reverse()]
         elif name == 'place':
             a, b, p, g, _, c, _ = args
@@ -189,8 +193,11 @@ def post_process(problem, plan, teleport=False):
             else:
                 print("no reconfig")
                 [t2] = c.commands
-                # problem.extract_traj_data(t2)
-                # problem.extract_traj_data(t2.reverse())
+                problem.extract_traj_data(t2)
+                time_stamps = time_stamps + problem.dts[-1]
+                time_stamps.append(0.1)
+                problem.extract_traj_data(t2.reverse())
+                time_stamps = time_stamps + problem.dts[-1]
                 new_commands = [t2, detach, open_gripper, t2.reverse()]
         elif name == 'clean': # TODO: add text or change color?
             body, sink = args
@@ -210,7 +217,7 @@ def post_process(problem, plan, teleport=False):
             raise ValueError(name)
         print(i, name, args, new_commands)
         commands += new_commands
-    return commands, reconfig_count
+    return commands, reconfig_count, time_stamps
 
 
 def main(verbose=True):
@@ -220,7 +227,7 @@ def main(verbose=True):
 
 
     parser = create_parser()
-    parser.add_argument('-problem', default='packed_force_aware_transfer', help='The name of the problem to solve')
+    parser.add_argument('-problem', default='packed_force_aware_transfer_HIRO', help='The name of the problem to solve')
     parser.add_argument('-loops', default=10, type=int, help='The number of itterations to run experiment')
     parser.add_argument('-n', '--number', default=1, type=int, help='The number of objects')
     parser.add_argument('-cfree', action='store_true', help='Disables collisions')
@@ -232,9 +239,9 @@ def main(verbose=True):
     parser.add_argument('-simulate', action='store_true', help='Simulates the system')
     args = parser.parse_args()
     print('Arguments:', args)
-    DISTANCE = 0.5
+    DISTANCE = 0.3
     MASS = '9kg'
-    data_dir = '/home/liam/success_rate_mass_data_random/'
+    data_dir = '/home/liam/success_rate_dist_data_hiro_sim/'
 
     timestamp = str(datetime.datetime.now())
     f = f'{data_dir} {timestamp}_{args.problem}_{METHOD}'
@@ -270,11 +277,6 @@ def main(verbose=True):
       print('connected to gui')
       with HideOutput():
           problem = problem_fn(num=args.number, dist=DISTANCE)
-          if any([not is_pose_on_r(get_pose(problem.movable[-1]), problem.surfaces[0])]):
-            run = run - 1
-            del problem
-            disconnect()
-            continue
       set_mass_global(get_mass(problem.movable[-1]))
 
       print('problem found')
@@ -342,30 +344,31 @@ def main(verbose=True):
         with open(datafileCsv, 'a') as file:
             writer = csv.writer(file)
             writer.writerow(data)
-        # np.savez(traj_file, x=problem.solution_confs, y=problem.solution_vels, z=problem.solution_accels, xx=problem.solution_torques_rne, yy=problem.solution_torques_dyn, zz=problem.solution_torques_arne)
+        np.savez(traj_file, q=problem.solution_confs, qd=problem.solution_vels, qdd=problem.solution_accels, rbt_eq_torques=problem.solution_torques_dyn, rne_torques=problem.solution_torques_arne, ts=problem.time_steps)
         disconnect()
         continue
 
       with LockRenderer(lock=not args.enable):
           problem.remove_gripper()
-          commands, reconfig_count = post_process(problem, plan, teleport=args.teleport)
+          commands, reconfig_count, time_stamps = post_process(problem, plan, teleport=args.teleport)
           saver.restore()
       p.setRealTimeSimulation(True)
-    #   np.savez(traj_file, x=problem.solution_confs, y=problem.solution_vels, z=problem.solution_accels, xx=problem.solution_torques_rne, yy=problem.solution_torques_dyn, zz=problem.solution_torques_arne)
+      np.savez(traj_file, q=problem.solution_confs, qd=problem.solution_vels, qdd=problem.solution_accels, rbt_eq_torques=problem.solution_torques_dyn, rne_torques=problem.solution_torques_arne, ts=problem.time_steps)
       draw_base_limits(problem.base_limits, color=(1, 0, 0))
 
-      exec_time = time.time()
       state = State()
       if args.simulate:
           control_commands(commands)
       else:
         time_step = None if args.teleport else TIME_STEP
-        state = apply_commands(state, commands, time_step)
+        if len(time_stamps) == 0:
+            time_stamps = time_step
+        state = apply_commands(state, commands, time_stamps)
 
 
 
         total_time = time.time() - start_time
-        exec_time = time.time() - exec_time
+        exec_time = problem.total_time
         items = args.number
         solved = True
         mass = get_mass(problem.movable[0])
